@@ -1,0 +1,30 @@
+{
+  "before": [
+    "Data Warehousing",
+    "Introduction to Data Science",
+    "Computer Networks",
+    "AutoML in Practice",
+    "Cryptography",
+    "Numerical Methods",
+    "Machine Learning",
+    "Deep Learning",
+    "Explainable AI",
+    "Information Security",
+    "Relational Databases",
+    "Linear Algebra"
+  ],
+  "after": [
+    "Relational Databases",
+    "Introduction to Data Science",
+    "AutoML in Practice",
+    "Machine Learning",
+    "Computer Networks",
+    "Deep Learning",
+    "Explainable AI",
+    "NoSQL Databases",
+    "Cryptography",
+    "Numerical Methods",
+    "Calculus I",
+    "History of Kazakhstan"
+  ]
+}

@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EduRec</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #fff; --text: #1d2433; --muted: #6b7385; --line: #e4e7ef;
+    --accent: #3b5bdb; --accent-soft: #e8edff; --ok: #2b8a3e; --warn: #c92a2a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 20px; margin: 0; color: var(--accent); }
+  header .who { margin-left: auto; color: var(--muted); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  button, select, input { font: inherit; }
+  button { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: #fff; }
+  nav { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  nav button { background: transparent; color: var(--text); border-color: var(--line); }
+  nav button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; cursor: pointer; transition: box-shadow .15s; }
+  .card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.07); }
+  .card h3 { margin: 4px 0 6px; font-size: 16px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
+  .reason { margin-top: 8px; font-size: 13px; color: var(--ok); }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .toolbar input { flex: 1; min-width: 180px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .auth { max-width: 380px; margin: 40px auto; display: grid; gap: 10px; }
+  .error { color: var(--warn); min-height: 1.5em; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  dialog { border: none; border-radius: 14px; padding: 0; max-width: 640px; width: calc(100% - 32px); }
+  dialog::backdrop { background: rgba(20,25,40,.45); }
+  dialog .body { padding: 22px; }
+  .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+  .similar { display: grid; gap: 6px; }
+  .similar div { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: #fff; padding: 10px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  h2 { margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>EduRec</h1><span class="meta">course recommendations for students</span>
+  <span class="who" id="who"></span>
+  <button class="ghost" id="logout" hidden>Log out</button>
+</header>
+<main id="app"></main>
+<dialog id="course"><div class="body" id="courseBody"></div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let token = localStorage.getItem('token');
+let me = null;
+let tab = 'recs';
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: opts.body && JSON.stringify(opts.body),
+  });
+  if (res.status === 401 && token) { logout(); throw new Error('Session expired'); }
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.detail || res.statusText);
+  return data;
+}
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+function logout() { token = null; me = null; localStorage.removeItem('token'); render(); }
+$('#logout').onclick = logout;
+
+async function render() {
+  if (token && !me) me = await api('/api/students/me').catch(() => null);
+  if (!me) { token = null; $('#who').textContent = ''; $('#logout').hidden = true; return renderAuth(); }
+  $('#who').textContent = `${me.fullName} · ${me.roles.join(', ')}`;
+  $('#logout').hidden = false;
+  const tabs = [['recs', 'For you'], ['catalog', 'Catalog'], ['history', 'My history']];
+  if (me.roles.includes('ADMIN')) tabs.push(['admin', 'Model']);
+  $('#app').innerHTML = `<nav>${tabs.map(([k, l]) => `<button data-tab="${k}" class="${k === tab ? 'active' : ''}">${l}</button>`).join('')}</nav><section id="view"></section>`;
+  document.querySelectorAll('nav button').forEach((b) => (b.onclick = () => { tab = b.dataset.tab; render(); }));
+  ({ recs: renderRecs, catalog: renderCatalog, history: renderHistory, admin: renderAdmin })[tab]();
+}
+
+function renderAuth() {
+  $('#app').innerHTML = `
+    <form class="panel auth" id="auth">
+      <h2 id="authTitle">Log in</h2>
+      <input name="email" type="email" placeholder="Email" required value="student@demo.kz" autocomplete="username">
+      <input name="password" type="password" placeholder="Password" required minlength="6" value="student123" autocomplete="current-password">
+      <input name="fullName" placeholder="Full name" hidden>
+      <button>Continue</button>
+      <div class="error" id="authError"></div>
+      <span class="meta">Demo: student@demo.kz / student123 · admin@demo.kz / admin123</span>
+      <button type="button" class="ghost" id="toggle">No account? Register</button>
+    </form>`;
+  let register = false;
+  $('#toggle').onclick = () => {
+    register = !register;
+    $('#authTitle').textContent = register ? 'Register' : 'Log in';
+    $('#toggle').textContent = register ? 'Have an account? Log in' : 'No account? Register';
+    const name = $('#auth [name=fullName]'); name.hidden = !register; name.required = register;
+  };
+  $('#auth').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    try {
+      const body = register ? f : { email: f.email, password: f.password };
+      token = (await api(`/api/auth/${register ? 'register' : 'login'}`, { method: 'POST', body })).token;
+      localStorage.setItem('token', token);
+      tab = 'recs';
+      render();
+    } catch (err) { $('#authError').textContent = err.message; }
+  };
+}
+
+const stars = (c) => c.avgRating ? `★ ${c.avgRating} (${c.ratingCount})` : 'no ratings yet';
+function card(c, extra = '') {
+  return `<div class="card" data-id="${esc(c.id)}">
+    <span class="chip">${esc(c.category)}</span>
+    <h3>${esc(c.name)}</h3>
+    <div class="meta">${esc(c.code)} · ${c.credits} credits · difficulty ${c.difficulty}/5 · ${esc(c.teachingLanguage)}</div>
+    <div class="meta">${stars(c)} · ${c.enrollCount} enrolled</div>${extra}</div>`;
+}
+function bindCards(root) { root.querySelectorAll('.card').forEach((el) => (el.onclick = () => openCourse(el.dataset.id))); }
+
+async function renderRecs() {
+  const v = $('#view');
+  v.innerHTML = `<h2>Recommended for you</h2><p class="sub">Item-based collaborative filtering: courses that students with similar choices also took.</p><div class="grid" id="recs">Loading…</div>`;
+  const recs = await api('/api/students/me/recommendations?limit=12');
+  $('#recs').innerHTML = recs.map((r) => card(r.course, `<div class="reason">${esc(r.reason)}${r.score ? ` · score ${r.score}` : ''}</div>`)).join('') || 'Nothing yet.';
+  bindCards(v);
+}
+
+async function renderCatalog(page = 0) {
+  const v = $('#view');
+  if (!$('#search')) {
+    v.innerHTML = `<div class="toolbar" id="search">
+        <input id="q" placeholder="Search name, description, tags…">
+        <select id="cat"><option value="">All categories</option>${['Programming', 'Data Science', 'Mathematics', 'Databases', 'Networks and Security', 'Economics', 'Languages', 'Humanities'].map((c) => `<option>${c}</option>`).join('')}</select>
+        <select id="diff"><option value="">Any difficulty</option>${[1, 2, 3, 4, 5].map((d) => `<option>${d}</option>`).join('')}</select>
+        <button id="go">Search</button></div>
+      <div class="grid" id="results"></div>
+      <div class="actions"><button class="ghost" id="prev">← Prev</button><span class="meta" id="pageInfo"></span><button class="ghost" id="next">Next →</button></div>`;
+    $('#go').onclick = () => renderCatalog(0);
+    $('#q').onkeydown = (e) => e.key === 'Enter' && renderCatalog(0);
+  }
+  const p = new URLSearchParams({ page, size: 12 });
+  if ($('#q').value) p.set('q', $('#q').value);
+  if ($('#cat').value) p.set('category', $('#cat').value);
+  if ($('#diff').value) p.set('difficulty', $('#diff').value);
+  const res = await api('/api/courses?' + p);
+  $('#results').innerHTML = res.items.map((c) => card(c)).join('') || 'No courses found.';
+  const pages = Math.max(1, Math.ceil(res.total / res.size));
+  $('#pageInfo').textContent = `Page ${page + 1} of ${pages} · ${res.total} courses`;
+  $('#prev').disabled = page === 0; $('#next').disabled = page + 1 >= pages;
+  $('#prev').onclick = () => renderCatalog(page - 1); $('#next').onclick = () => renderCatalog(page + 1);
+  bindCards($('#results'));
+}
+
+async function renderHistory() {
+  const h = await api('/api/students/me/interactions?size=50');
+  $('#view').innerHTML = `<h2>My history</h2><p class="sub">${h.total} interactions, newest first. They feed your recommendations.</p>
+    <table><tr><th>When</th><th>Course</th><th>Action</th><th>Value</th></tr>
+    ${h.items.map((i) => `<tr><td>${new Date(i.occurredAt).toLocaleString()}</td><td>${esc(i.courseName)}</td><td>${i.type}</td><td>${i.value ?? ''}</td></tr>`).join('')}</table>`;
+}
+
+function renderAdmin() {
+  $('#view').innerHTML = `<div class="panel"><h2>Recommendation model</h2>
+    <p class="sub">The item-item similarity model is rebuilt every 10 minutes. Rebuild it now after bulk changes.</p>
+    <button id="rebuild">Rebuild now</button><pre id="out" class="meta"></pre></div>`;
+  $('#rebuild').onclick = async () => {
+    $('#rebuild').disabled = true;
+    const r = await api('/api/admin/recommendations/rebuild', { method: 'POST' });
+    $('#out').textContent = `Students: ${r.students}\nCourses with neighbours: ${r.courses}\nSimilarity pairs stored: ${r.pairs}\nTime: ${r.millis} ms`;
+    $('#rebuild').disabled = false;
+  };
+}
+
+async function track(courseId, type, value) {
+  return api('/api/interactions', { method: 'POST', body: { courseId, type, ...(value ? { value } : {}) } });
+}
+
+async function openCourse(id) {
+  const [c, similar] = await Promise.all([api('/api/courses/' + id), api(`/api/courses/${id}/similar?limit=5`)]);
+  track(id, 'VIEW').catch(() => {});
+  $('#courseBody').innerHTML = `
+    <span class="chip">${esc(c.category)}</span>
+    <h2>${esc(c.name)}</h2>
+    <div class="meta">${esc(c.code)} · ${c.credits} credits · difficulty ${c.difficulty}/5 · ${esc(c.teachingLanguage)} · ${esc(c.instructor)}</div>
+    <p>${esc(c.description)}</p>
+    <div class="meta">${stars(c)} · ${c.enrollCount} enrolled · tags: ${c.tags.map(esc).join(', ')}</div>
+    <div class="actions">
+      <button id="enroll">Enroll</button>
+      <select id="rating"><option value="">Rate…</option>${[5, 4, 3, 2, 1].map((n) => `<option>${n}</option>`).join('')}</select>
+      <button class="ghost" id="complete">Mark completed</button>
+      <button class="ghost" id="close" style="margin-left:auto">Close</button>
+    </div>
+    <h3>Students who took this also took</h3>
+    <div class="similar">${similar.map((s) => `<div data-id="${esc(s.course.id)}"><span>${esc(s.course.name)} <span class="meta">${esc(s.course.category)}</span></span><span class="meta">similarity ${s.score}</span></div>`).join('') || '<span class="meta">Not enough data yet.</span>'}</div>`;
+  const done = (msg) => () => { toast(msg + ', recommendations updated'); };
+  $('#enroll').onclick = () => track(id, 'ENROLL').then(done('Enrolled')).catch((e) => toast(e.message));
+  $('#complete').onclick = () => track(id, 'COMPLETE').then(done('Completed')).catch((e) => toast(e.message));
+  $('#rating').onchange = (e) => e.target.value && track(id, 'RATE', Number(e.target.value)).then(done('Rated')).catch((er) => toast(er.message));
+  $('#close').onclick = () => $('#course').close();
+  $('#courseBody').querySelectorAll('.similar div').forEach((el) => (el.onclick = () => openCourse(el.dataset.id)));
+  if (!$('#course').open) $('#course').showModal();
+}
+$('#course').addEventListener('close', () => tab === 'recs' && me && renderRecs());
+
+render();
+</script>
+</body>
+</html>

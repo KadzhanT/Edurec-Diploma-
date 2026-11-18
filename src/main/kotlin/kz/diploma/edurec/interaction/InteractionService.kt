@@ -9,6 +9,8 @@ import kz.diploma.edurec.common.NotFoundException
 import kz.diploma.edurec.common.PageResponse
 import kz.diploma.edurec.course.Course
 import kz.diploma.edurec.course.CourseRepository
+import kz.diploma.edurec.recommendation.RecommendationService
+import org.springframework.cache.annotation.CacheEvict
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.mongodb.core.MongoTemplate
 import org.springframework.data.mongodb.core.query.Criteria
@@ -32,6 +34,7 @@ class InteractionService(
     private val courses: CourseRepository,
     private val mongo: MongoTemplate,
 ) {
+    @CacheEvict(RecommendationService.RECS, key = "#studentId") // new behaviour -> fresh recommendations
     fun record(studentId: String, req: InteractionRequest): InteractionDto {
         validateValue(req.type, req.value)
         val course = courses.findById(req.courseId).orElseThrow { NotFoundException("Course ${req.courseId} not found") }

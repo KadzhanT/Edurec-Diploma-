@@ -4,14 +4,15 @@ import kz.diploma.edurec.course.Course
 import kz.diploma.edurec.course.CourseRepository
 import kz.diploma.edurec.course.CourseStats
 import kz.diploma.edurec.interaction.Interaction
-import kz.diploma.edurec.interaction.InteractionRepository
 import kz.diploma.edurec.interaction.InteractionType
+import kz.diploma.edurec.recommendation.RecommendationService
 import kz.diploma.edurec.student.Student
 import kz.diploma.edurec.student.StudentRepository
 import org.slf4j.LoggerFactory
 import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.data.mongodb.core.MongoTemplate
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Component
 import java.time.Duration
@@ -21,27 +22,37 @@ import kotlin.math.roundToInt
 
 /**
  * Fills an empty database with synthetic, reproducible data (fixed seed).
- * Grades depend on a hidden student "ability", course difficulty and study year, so the future AutoML model has a real signal to learn.
+ * Each student prefers 2 categories tied to their faculty, so collaborative filtering has a real co-taking signal;
+ * grades depend on a hidden "ability", course difficulty and study year; ratings are higher in preferred categories.
  */
 @Component
-@ConditionalOnProperty("app.seed.enabled", havingValue = "true")
 class DataSeeder(
     private val students: StudentRepository,
     private val courses: CourseRepository,
-    private val interactions: InteractionRepository,
+    private val mongo: MongoTemplate,
+    private val recommendations: RecommendationService,
     private val passwordEncoder: PasswordEncoder,
+    @Value("\${app.seed.enabled:true}") private val enabled: Boolean,
+    @Value("\${app.seed.students:200}") private val size: Int,
 ) : ApplicationRunner {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val rnd = Random(42)
+    private var rnd = Random(42)
 
     override fun run(args: ApplicationArguments) {
-        if (courses.count() > 0) return log.info("Seed skipped: database is not empty")
+        if (!enabled) return
+        if (courses.count() == 0L) return seed(size)
+        log.info("Seed skipped: database is not empty")
+        recommendations.rebuild() // the DB may predate the model; do not wait for the first scheduled run
+    }
 
+    /** Inserts the catalog, demo accounts and [studentCount] synthetic students with histories, then builds the model. */
+    fun seed(studentCount: Int) {
+        rnd = Random(42)
         val savedCourses = courses.saveAll(catalog())
-        val savedStudents = students.saveAll(demoAccounts() + syntheticStudents(200))
+        val savedStudents = students.saveAll(demoAccounts() + syntheticStudents(studentCount))
 
         val generated = savedStudents.filter { "STUDENT" in it.roles }.flatMap { studentHistory(it, savedCourses) }
-        interactions.saveAll(generated)
+        mongo.insert(generated, Interaction::class.java) // one bulk insertMany
 
         val byCourse = generated.groupBy { it.courseId }
         courses.saveAll(
@@ -58,6 +69,7 @@ class DataSeeder(
             },
         )
         log.info("Seeded {} courses, {} students, {} interactions", savedCourses.size, savedStudents.size, generated.size)
+        recommendations.rebuild()
     }
 
     private fun demoAccounts() = listOf(
@@ -84,10 +96,21 @@ class DataSeeder(
         }
     }
 
+    private val facultyInterests = mapOf(
+        "Information Technology" to listOf("Programming", "Data Science", "Databases", "Networks and Security"),
+        "Mathematics" to listOf("Mathematics", "Data Science", "Programming"),
+        "Economics" to listOf("Economics", "Mathematics", "Languages"),
+        "Engineering" to listOf("Networks and Security", "Mathematics", "Programming"),
+    )
+
     private fun studentHistory(student: Student, catalog: List<Course>): List<Interaction> {
         val ability = rnd.nextGaussian()
         val year = student.yearOfStudy ?: 1
-        return catalog.shuffled(rnd).take(5 + rnd.nextInt(6)).flatMap { course ->
+        val favorites = facultyInterests[student.faculty].orEmpty().shuffled(rnd).take(2).toSet()
+        // Weighted sampling without replacement: courses of favorite categories get a 4x random key, so they dominate the pick.
+        val picked = catalog.map { it to rnd.nextDouble() * if (it.category in favorites) 4 else 1 }
+            .sortedByDescending { it.second }.map { it.first }.take(5 + rnd.nextInt(6))
+        return picked.flatMap { course ->
             var t = Instant.now().minus(Duration.ofDays(30L + rnd.nextInt(330)))
             fun next(type: InteractionType, value: Double? = null): Interaction {
                 t = t.plus(Duration.ofHours(1L + rnd.nextInt(24 * 20)))
@@ -103,7 +126,8 @@ class DataSeeder(
             events += next(InteractionType.GRADE, grade.roundToInt().toDouble())
             if (grade >= 50) events += next(InteractionType.COMPLETE)
             if (rnd.nextDouble() < 0.6) {
-                val rating = (3 + (grade - 70) / 15 + 0.7 * rnd.nextGaussian()).roundToInt().coerceIn(1, 5)
+                val liked = if (course.category in favorites) 0.8 else -0.3
+                val rating = (3 + liked + (grade - 70) / 15 + 0.7 * rnd.nextGaussian()).roundToInt().coerceIn(1, 5)
                 events += next(InteractionType.RATE, rating.toDouble())
             }
             events
@@ -161,7 +185,7 @@ class DataSeeder(
                     difficulty = difficulty,
                     teachingLanguage = languages[rnd.nextInt(languages.size)],
                     instructor = instructors[rnd.nextInt(instructors.size)],
-                    tags = cat.tags + name.lowercase().split(" ").filter { it.length > 3 },
+                    tags = (cat.tags + name.lowercase().split(" ").filter { it.length > 3 }).distinct(),
                 )
             }
         }

@@ -13,6 +13,7 @@ import org.springframework.data.mongodb.repository.MongoRepository
 
 @Document("courses")
 @CompoundIndex(name = "category_difficulty", def = "{'category': 1, 'difficulty': 1}")
+@CompoundIndex(name = "popularity", def = "{'stats.enrollCount': -1}") // cold-start fallback of the recommender
 data class Course(
     @Id val id: String? = null,
     @Indexed(unique = true) val code: String,

@@ -83,6 +83,31 @@ class ApiFlowIT {
         }
         mvc.get("/api/students/me") { bearer(student) }.andExpect { jsonPath("$.email") { value("alice@test.kz") } }
 
+        // Recommendations: Bob co-takes ML and a second course, so Alice (ML only) gets that course recommended.
+        val second = JsonPath.read<String>(
+            mvc.post("/api/courses") { json(course.replace("DS201", "DS301").replace("Machine Learning", "Deep Learning")); bearer(admin) }.body(),
+            "$.id",
+        )
+        val bob = token(mvc.post("/api/auth/register") { json("""{"email":"bob@test.kz","password":"secret1","fullName":"Bob"}""") })
+        listOf(courseId, second).forEach { id ->
+            mvc.post("/api/interactions") { json("""{"courseId":"$id","type":"ENROLL"}"""); bearer(bob) }.andExpect { status { isCreated() } }
+        }
+        mvc.post("/api/admin/recommendations/rebuild") { bearer(student) }.andExpect { status { isForbidden() } }
+        mvc.post("/api/admin/recommendations/rebuild") { bearer(admin) }.andExpect {
+            status { isOk() }
+            jsonPath("$.courses") { value(2) }
+        }
+        mvc.get("/api/students/me/recommendations") { bearer(student) }.andExpect {
+            status { isOk() }
+            jsonPath("$[0].course.id") { value(second) }
+            jsonPath("$[?(@.course.id == '$courseId')]") { isEmpty() } // already taken
+        }
+        mvc.get("/api/courses/$courseId/similar").andExpect {
+            status { isOk() }
+            jsonPath("$[0].course.code") { value("DS301") }
+        }
+        mvc.delete("/api/courses/$second") { bearer(admin) }.andExpect { status { isNoContent() } }
+
         mvc.delete("/api/courses/$courseId") { bearer(admin) }.andExpect { status { isNoContent() } }
         mvc.get("/api/courses/$courseId").andExpect { status { isNotFound() } }
     }

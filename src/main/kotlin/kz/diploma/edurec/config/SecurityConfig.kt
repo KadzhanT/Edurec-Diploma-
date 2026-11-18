@@ -39,6 +39,8 @@ class SecurityConfig(@Value("\${app.jwt.secret}") secret: String) {
                 it.requestMatchers(HttpMethod.POST, "/api/auth/**").permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/courses/**").permitAll()
                     .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                    .requestMatchers(HttpMethod.GET, "/", "/index.html", "/favicon.ico").permitAll()
+                    .requestMatchers("/api/admin/**").hasRole("ADMIN")
                     .requestMatchers("/api/courses/**").hasRole("ADMIN")
                     .anyRequest().authenticated()
             }
