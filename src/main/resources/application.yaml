@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: edurec
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/edurec}
+  data:
+    mongodb:
+      auto-index-creation: true
+
+app:
+  jwt:
+    # HS256 needs at least 32 bytes. Override with JWT_SECRET outside local development.
+    secret: ${JWT_SECRET:local-dev-secret-change-me-0123456789abcdef}
+  seed:
+    enabled: ${SEED_ENABLED:true}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
